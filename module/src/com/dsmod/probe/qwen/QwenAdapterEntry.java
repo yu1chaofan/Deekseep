@@ -155,8 +155,21 @@ public final class QwenAdapterEntry {
         QwenLog.safe(QwenCompat.diagnosticSummary());
         QwenLoadMarker.write("loaded hostGeneration=" + QwenCompat.generationName());
         QwenCrashSink.install();
-        // Tier A ends here: attached and self-describing, with no host hook installed. Tier B needs
-        // a symbol comparison table that does not exist yet; Tier C is never reachable from here.
+        // Tier A ends here: attached and self-describing. Tier C is never reachable from this
+        // host. Tier B is attempted below, but a pipeline that fails to install is a capability
+        // that did not light up, not an attach failure: flipping tryAttach to false would hide
+        // diagnostics for a host that is otherwise perfectly well identified.
+        QwenChatPipeline.ensureSwitchFile();
+        try {
+            boolean pipeline = QwenChatPipeline.install(loader);
+            QwenLog.safe("tierB chat pipeline installed=" + pipeline
+                    + " seam=" + QwenChatPipeline.seam()
+                    + " enabled=" + QwenChatPipeline.isEnabled());
+            if (!pipeline) degraded = true;
+        } catch (Throwable t) {
+            degraded = true;
+            QwenLog.safe("tierB chat pipeline wiring failed: " + QwenCrashSink.describe(t));
+        }
         lastResult = degraded ? "attached-degraded" : "attached";
         return true;
     }

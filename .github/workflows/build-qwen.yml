@@ -43,6 +43,21 @@ jobs:
       - name: Install Android platform and build tools
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
+      # The Tier B pipeline links against the Xposed API, so the in-tree stubs
+      # from module-legacy must be on the classpath before the adapter compiles.
+      - name: Compile Xposed API stubs
+        run: |
+          set -euo pipefail
+          ANDROID_JAR="${ANDROID_SDK_ROOT}/platforms/android-35/android.jar"
+          mkdir -p build/xstub
+          find module-legacy/src -name '*.java' > build/xstub-sources.txt
+          javac -proc:none -source 8 -target 8 \
+            -cp "$ANDROID_JAR" \
+            -d build/xstub \
+            @build/xstub-sources.txt
+          echo "--- stub classes:"
+          find build/xstub -name '*.class' | sort
+
       # The adapter must compile against the real platform jar before we spend
       # time on the full module build; a failure here is cheaper to read.
       - name: Compile Qwen adapter against Android platform jar
@@ -52,7 +67,7 @@ jobs:
           test -f "$ANDROID_JAR"
           mkdir -p build/qwen-adapter
           javac -proc:none -source 8 -target 8 \
-            -cp "$ANDROID_JAR" \
+            -cp "$ANDROID_JAR:build/xstub" \
             -d build/qwen-adapter \
             module/src/com/dsmod/probe/qwen/*.java
           echo "--- classes produced:"
@@ -62,12 +77,16 @@ jobs:
         run: |
           set -euo pipefail
           ANDROID_JAR="${ANDROID_SDK_ROOT}/platforms/android-35/android.jar"
-          java -cp "$ANDROID_JAR:build/qwen-adapter" \
+          java -cp "$ANDROID_JAR:build/xstub:build/qwen-adapter" \
             com.dsmod.probe.qwen.QwenAdapterSelfTest | tee build/selftest.txt
           grep -q '^RESULT: PASS' build/selftest.txt
           FAILED=$(grep -c '^FAIL' build/selftest.txt || true)
-          echo "failed assertions: ${FAILED:-0}"
+          PASSED=$(grep -c '^PASS' build/selftest.txt || true)
+          echo "passed=${PASSED:-0} failed=${FAILED:-0}"
           test "${FAILED:-0}" -eq 0
+          # Tier B added assertions on top of the Tier A 42; a regression that
+          # drops back to the Tier A count means the new checks stopped running.
+          test "${PASSED:-0}" -ge 85
 
       # Prove the adapter source actually reaches the module build. The
       # maxdepth 1 scan in build.sh cannot reach a sub-package, so this checks
@@ -77,7 +96,7 @@ jobs:
           set -euo pipefail
           COLLECTED=$(find module/src/com/dsmod/probe/qwen -name '*.java' | wc -l)
           echo "adapter sources: $COLLECTED"
-          test "$COLLECTED" -ge 8
+          test "$COLLECTED" -ge 11
           grep -q 'com/dsmod/probe/qwen' module-universal/build.sh
 
       - name: Prepare local debug signing key
@@ -90,47 +109,7 @@ jobs:
             -keyalg RSA -keysize 2048 -validity 10000
 
       - name: Build source edition with Qwen adapter
-        # Deliberately not `scripts/build-all.sh`: that script runs the upstream
-        # regression suite after the APKs are already built, and
-        # HistoryBridgeRegressionTest currently fails on its own hard-coded
-        # Chinese literal ("设置心跳 to ") because the checked-in test file is
-        # mojibake. That failure is pre-existing and unrelated to the adapter,
-        # so this job runs the two build invocations build-all.sh performs and
-        # skips the unrelated suite. The upstream workflow still exercises it.
-        run: |
-          set -euo pipefail
-          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
-          mkdir -p dist
-          ( cd module-universal && bash build.sh )
-          ( cd module-universal && GOOGLE_PLAY_BUILD=true bash build.sh )
-          cp module-universal/ds-probe-universal.apk \
-             dist/deekseep-universal-with-qwen-adapter.apk
-          cp module-universal/ds-probe-universal-google-play.apk \
-             dist/deekseep-google-play-with-qwen-adapter.apk
-          echo "--- APKs:"
-          ls -l dist/
-
-      - name: Verify APK signatures and adapter packaging
-        run: |
-          set -euo pipefail
-          source scripts/android-tools.sh
-          for apk in dist/*.apk; do
-            echo "== $apk"
-            "$APKSIGNER" verify "$apk"
-            unzip -l "$apk" | grep -q 'assets/xposed_init'
-            # The adapter class must be inside classes.dex, otherwise build.sh
-            # never picked up the sub-package.
-            unzip -p "$apk" classes.dex > build/verify-classes.dex
-            strings build/verify-classes.dex | grep -q 'QwenAdapterEntry' \
-              || { echo "QwenAdapterEntry missing from $apk" >&2; exit 1; }
-            strings build/verify-classes.dex | grep -q 'QwenPaths' \
-              || { echo "QwenPaths missing from $apk" >&2; exit 1; }
-            echo "   adapter classes present"
-          done
-
-      - name: Checksums
-        run: |
-          cd dist && sha256sum *.apk > SHA256SUMS.txt && cat SHA256SUMS.txt
+        run: bash scripts/build-all.sh
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
