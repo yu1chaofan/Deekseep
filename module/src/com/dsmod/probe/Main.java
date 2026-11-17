@@ -110,6 +110,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
+import com.dsmod.probe.qwen.QwenAdapterEntry;
+import com.dsmod.probe.qwen.QwenHost;
 import com.dsmod.probe.LegacyXposedModule.Chain;
 import com.dsmod.probe.LegacyXposedModule.Hooker;
 import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam;
@@ -1098,6 +1100,19 @@ public class Main extends MainReflectionSupport implements IXposedHookLoadPackag
         if (param == null) DeekseepLetter.getLetter();
         final ClassLoader cl = param.classLoader;
         final String pkg = param.packageName;
+
+        // Qwen Studio is a different host application, not a DeepSeek generation: it shares no
+        // obfuscated symbol table with com.deepseek.chat and is built on Compose plus Ktor instead
+        // of DeepSeek's own request model. Every constant below this point (LOG_PATH, the
+        // HostCompat probe, the retired-host notice, installAllFeatureHooks) belongs to the
+        // DeepSeek storage and symbol contract, so a Qwen package must branch out here and never
+        // fall through. Branching keeps the DeepSeek chain byte-identical for its own hosts;
+        // widening the target list instead would make every downstream step run against the wrong
+        // semantics.
+        if (QwenHost.isQwenPackage(pkg)) {
+            QwenAdapterEntry.tryAttach(cl, pkg);
+            return;
+        }
 
         // The embedded coexistence build uses a suffixed application id for cold-start
         // validation. It runs the same DeepSeek classes, so allow it through the hook bootstrap;

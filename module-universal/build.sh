@@ -74,6 +74,9 @@ cp ../module/src/com/dsmod/probe/Main.java \
 echo "[1/7] collect open-source core and Xposed adapter"
 find ../module/src/com/dsmod/probe -maxdepth 1 -name '*.java' \
   ! -name Main.java ! -name BuildInfo.java > "$OUT/sources.txt"
+# The Qwen Studio adapter lives in a sub-package, which the maxdepth 1 scan above
+# cannot reach. Collected separately so the DeepSeek source set stays byte-identical.
+find ../module/src/com/dsmod/probe/qwen -name '*.java' >> "$OUT/sources.txt"
 find ../module/src/com/dsmod/relay -name '*.java' >> "$OUT/sources.txt"
 find ../module-legacy/compat -name '*.java' >> "$OUT/sources.txt"
 find ../module-legacy/src/de -name '*.java' >> "$OUT/sources.txt"

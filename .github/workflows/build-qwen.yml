@@ -1,0 +1,107 @@
+name: Build with Qwen Studio adapter
+
+# Separate workflow from build.yml on purpose: the existing file keeps its own
+# artifact name and trigger behaviour, while this one adds the Qwen Studio host
+# adapter and runs its self-test as part of the build. Keeping them apart means a
+# regression in the adapter cannot change what the upstream build produces.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'module/src/com/dsmod/probe/qwen/**'
+      - '.github/workflows/build-qwen.yml'
+  pull_request:
+    paths:
+      - 'module/src/com/dsmod/probe/qwen/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform and build tools
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      # The adapter must compile against the real platform jar before we spend
+      # time on the full module build; a failure here is cheaper to read.
+      - name: Compile Qwen adapter against Android platform jar
+        run: |
+          set -euo pipefail
+          ANDROID_JAR="${ANDROID_SDK_ROOT}/platforms/android-35/android.jar"
+          test -f "$ANDROID_JAR"
+          mkdir -p build/qwen-adapter
+          javac -proc:none -source 8 -target 8 \
+            -cp "$ANDROID_JAR" \
+            -d build/qwen-adapter \
+            module/src/com/dsmod/probe/qwen/*.java
+          echo "--- classes produced:"
+          find build/qwen-adapter -name '*.class' | sort
+
+      - name: Run Qwen adapter self-test
+        run: |
+          set -euo pipefail
+          ANDROID_JAR="${ANDROID_SDK_ROOT}/platforms/android-35/android.jar"
+          java -cp "$ANDROID_JAR:build/qwen-adapter" \
+            com.dsmod.probe.qwen.QwenAdapterSelfTest | tee build/selftest.txt
+          grep -q '^RESULT: PASS' build/selftest.txt
+          FAILED=$(grep -c '^FAIL' build/selftest.txt || true)
+          echo "failed assertions: ${FAILED:-0}"
+          test "${FAILED:-0}" -eq 0
+
+      # Prove the adapter source actually reaches the module build. The
+      # maxdepth 1 scan in build.sh cannot reach a sub-package, so this checks
+      # the second find line is present and effective.
+      - name: Verify adapter is collected by the module build
+        run: |
+          set -euo pipefail
+          COLLECTED=$(find module/src/com/dsmod/probe/qwen -name '*.java' | wc -l)
+          echo "adapter sources: $COLLECTED"
+          test "$COLLECTED" -ge 8
+          grep -q 'com/dsmod/probe/qwen' module-universal/build.sh
+
+      - name: Prepare local debug signing key
+        run: |
+          keytool -genkeypair -v \
+            -keystore module/debug.keystore \
+            -storepass android -keypass android \
+            -alias androiddebugkey \
+            -dname 'CN=Android Debug,O=Android,C=US' \
+            -keyalg RSA -keysize 2048 -validity 10000
+
+      - name: Build source edition with Qwen adapter
+        run: bash scripts/build-all.sh
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: deekseep-qwen-adapter
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload self-test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen-adapter-selftest
+          path: build/selftest.txt
+          if-no-files-found: warn
+          retention-days: 14
