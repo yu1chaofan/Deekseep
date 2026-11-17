@@ -53,6 +53,26 @@ public final class QwenPaths {
     public static final String GOOGLE_PLAY_MARKER_FILE = FILES_DIR + "/deekseep_qwen_google_play";
 
     /**
+     * Tier B chat-pipeline switch; absence or any value other than an explicit on-token means off.
+     *
+     * <p>Separate from {@link #MODULE_ENABLED_FILE} on purpose: the module switch governs the whole
+     * adapter and defaults to enabled, while this one governs a hook that has never run on
+     * hardware and must default to disabled. Two switches with two defaults is the only way to get
+     * both behaviours.</p>
+     */
+    public static final String CHAT_PIPELINE_ENABLED_FILE =
+            FILES_DIR + "/" + QwenChatPipeline.ENABLED_FILE_NAME;
+
+    /**
+     * Tier B response capture log.
+     *
+     * <p>Not {@link #SRV_LOG_PATH}: that is the shared {@code deekseep_srv.log} format the DeepSeek
+     * branch also writes, and a Tier B capture is a different shape (SSE frames, truncation
+     * markers). Mixing them would make either file unparsable.</p>
+     */
+    public static final String CHAT_PIPELINE_LOG_PATH = FILES_DIR + "/deekseep_qwen_chat.log";
+
+    /**
      * In-sandbox load marker.
      *
      * <p>Separate from the external marker because the external one is shared storage and may be

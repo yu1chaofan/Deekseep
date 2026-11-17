@@ -122,6 +122,8 @@ public final class QwenAdapterEntry {
         out.append("degraded=").append(degraded).append('\n');
         out.append("lastResult=").append(lastResult).append('\n');
         out.append("prefs=moduleEnabled:").append(isModuleEnabled());
+        out.append("\nprefs=chatPipelineEnabled:").append(QwenChatPipeline.isEnabled());
+        out.append("\nchatPipeline=").append(QwenChatPipeline.isInstalled() ? "installed" : "idle");
         return out.toString();
     }
 

@@ -274,129 +274,227 @@ public final class QwenAdapterSelfTest {
     }
 
     /**
-     * Tier B: the symbol table must describe real, reflectable names.
+     * Tier B: the symbol table must name real, correctly shaped members.
      *
-     * <p>These run without a host class loader on purpose. The pipeline's failure mode is a
-     * symbol that was mistyped or left blank, and that failure is visible statically — a blank or
-     * malformed descriptor would make reflection throw inside the host's call stack, which is the
-     * one outcome the pipeline is designed to make impossible.</p>
+     * <p>These run without a host class loader on purpose. The realistic Tier B failure is not a
+     * broken hook, it is a constant that was mistyped or never filled in: reflection would then
+     * throw {@code ClassNotFoundException} on a device, from inside the host's network callback,
+     * with nothing in the log because the log path itself might be the thing that never opened.
+     * Validating the table statically is the only check available before hardware.</p>
+     *
+     * <p>The descriptor assertions are written the long way round — spell out the expected smali
+     * text, then compare — because the whole point is to freeze the strings that were read out of
+     * the 2.0.0 dex. If a future build renames {@code rawBody}, this test is where the diff shows
+     * up, not in a user's crash report.</p>
      */
     private static void checkTierBSymbols(List<String> out) {
-        expect(out, "response class name is usable",
-                QwenSymbols.isUsableClassName(QwenSymbols.QWEN_RESPONSE));
-        expect(out, "response class is the qwen business layer",
-                QwenSymbols.QWEN_RESPONSE.startsWith("ai.qwenlm.chat.android."));
-        expect(out, "sse handler name is usable",
-                QwenSymbols.isUsableClassName(QwenSymbols.SSE_MESSAGE_HANDLER));
-        expect(out, "network module name is usable",
-                QwenSymbols.isUsableClassName(QwenSymbols.NETWORK_MODULE));
-        expect(out, "descriptorOf produces smali form",
+        expect(out, "response class is a binary name",
+                QwenSymbols.isBinaryName(QwenSymbols.RESPONSE_CLASS));
+        expect(out, "response class sits in the qwen business layer",
+                QwenSymbols.RESPONSE_CLASS.startsWith("ai.qwenlm.chat.android.clean."));
+        expect(out, "response class ends where the dex says",
+                QwenSymbols.RESPONSE_CLASS.endsWith("network.data.QwenResponse"));
+        expect(out, "response class descriptor is smali form",
                 "Lai/qwenlm/chat/android/clean/core/network/data/QwenResponse;"
-                        .equals(QwenSymbols.descriptorOf(QwenSymbols.QWEN_RESPONSE)));
-        expect(out, "descriptorOf rejects null", QwenSymbols.descriptorOf(null) == null);
-        expect(out, "descriptorOf rejects empty", QwenSymbols.descriptorOf("") == null);
-        // Blank names are the realistic mistake: a reserved table row that never got filled in.
-        expect(out, "blank class name rejected", !QwenSymbols.isUsableClassName("   "));
-        expect(out, "empty class name rejected", !QwenSymbols.isUsableClassName(""));
-        expect(out, "null class name rejected", !QwenSymbols.isUsableClassName(null));
-        expect(out, "single segment rejected", !QwenSymbols.isUsableClassName("QwenResponse"));
+                        .equals(QwenSymbols.responseClassDescriptor()));
+        expect(out, "setRawBody descriptor accepted",
+                QwenSymbols.isMethodDescriptor(QwenSymbols.RESPONSE_SET_RAW_BODY_DESC));
+        expect(out, "getRawBody descriptor accepted",
+                QwenSymbols.isMethodDescriptor(QwenSymbols.RESPONSE_GET_RAW_BODY_DESC));
+        expect(out, "null descriptor rejected",
+                !QwenSymbols.isMethodDescriptor(null));
+        expect(out, "descriptor without parens rejected",
+                !QwenSymbols.isMethodDescriptor("Ljava/lang/String;V"));
+        expect(out, "descriptor without return type rejected",
+                !QwenSymbols.isMethodDescriptor("(Ljava/lang/String;)"));
+        expect(out, "binary name rejects descriptor form",
+                !QwenSymbols.isBinaryName(QwenSymbols.responseClassDescriptor()));
+        expect(out, "binary name rejects blank", !QwenSymbols.isBinaryName("   "));
+        expect(out, "binary name rejects null", !QwenSymbols.isBinaryName(null));
+        expect(out, "handler names are all binary names",
+                QwenSymbols.isBinaryName(QwenSymbols.HANDLER_SSE_CLASS)
+                        && QwenSymbols.isBinaryName(QwenSymbols.HANDLER_NATIVE_SSE_CLASS)
+                        && QwenSymbols.isBinaryName(QwenSymbols.HANDLER_NON_SSE_CLASS));
+        expect(out, "shrinker names are all binary names",
+                QwenSymbols.isBinaryName(QwenSymbols.HANDLER_SSE_IMPL)
+                        && QwenSymbols.isBinaryName(QwenSymbols.HANDLER_NATIVE_SSE_IMPL)
+                        && QwenSymbols.isBinaryName(QwenSymbols.HANDLER_NON_SSE_IMPL));
 
-        // The constructor table is what makes the fallback hook addressable; a primitive and its
-        // boxed type do not match under reflection, so the exact types matter.
-        Class<?>[] types = QwenSymbols.PRIMARY_CTOR_PARAM_TYPES;
+        // The constructor table is what makes the fallback hook addressable. A primitive and its
+        // boxed type do not match under reflection, so the exact types carry the whole contract.
+        Class<?>[] types = QwenChatPipeline.constructorSignature();
         expect(out, "primary ctor has 8 parameters", types != null && types.length == 8);
-        expect(out, "primary ctor param 0 is boolean", types != null && types[0] == boolean.class);
-        expect(out, "primary ctor param 5 is int", types != null && types[5] == int.class);
-        expect(out, "primary ctor rawBody index is String",
-                types != null && QwenSymbols.PRIMARY_CTOR_RAW_BODY_INDEX < types.length
-                        && types[QwenSymbols.PRIMARY_CTOR_RAW_BODY_INDEX] == String.class);
-        expect(out, "rawBody setter signature matches column type",
-                "(Ljava/lang/String;)V".equals(QwenSymbols.SET_RAW_BODY_SIG)
-                        && types[QwenSymbols.PRIMARY_CTOR_RAW_BODY_INDEX] == String.class);
+        expect(out, "primary ctor param 0 is boolean",
+                types != null && types.length > 0 && types[0] == boolean.class);
+        expect(out, "primary ctor param 5 is int",
+                types != null && types.length > 5 && types[5] == int.class);
+        expect(out, "primary ctor param 4 is Object (erased data)",
+                types != null && types.length > 4 && types[4] == Object.class);
+        expect(out, "rawBody index lands on a String parameter",
+                types != null
+                        && QwenSymbols.RESPONSE_CTOR_RAW_BODY_INDEX < types.length
+                        && types[QwenSymbols.RESPONSE_CTOR_RAW_BODY_INDEX] == String.class);
+        expect(out, "rawBody is the last constructor parameter",
+                QwenSymbols.RESPONSE_CTOR_RAW_BODY_INDEX == types.length - 1);
+        expect(out, "rawBody setter column type matches ctor column",
+                "(Ljava/lang/String;)V".equals(QwenSymbols.RESPONSE_SET_RAW_BODY_DESC)
+                        && types[QwenSymbols.RESPONSE_CTOR_RAW_BODY_INDEX] == String.class);
+        expect(out, "descriptor parameter count matches the ctor table",
+                QwenSymbols.RESPONSE_CTOR_DESC.indexOf('(') == 0
+                        && countParams(QwenSymbols.RESPONSE_CTOR_DESC) == types.length);
+        expect(out, "serialization ctor is not the hooked one",
+                !QwenSymbols.RESPONSE_CTOR_SERIALIZATION_DESC
+                        .equals(QwenSymbols.RESPONSE_CTOR_DESC));
+        expect(out, "default-args ctor is not the hooked one",
+                !QwenSymbols.RESPONSE_CTOR_DEFAULT_ARGS_DESC
+                        .equals(QwenSymbols.RESPONSE_CTOR_DESC));
+        expect(out, "describe names the response class",
+                QwenSymbols.describe().contains(QwenSymbols.RESPONSE_CLASS));
+    }
+
+    /**
+     * Counts reference and primitive parameters in a JVM descriptor.
+     *
+     * <p>Deliberately minimal — the only descriptor it has to read is the one the table declares,
+     * and its job is to prove that string and the {@code Class[]} agree. A full parser here would
+     * be a second implementation of the same thing, which is precisely the drift the assertion is
+     * meant to catch.</p>
+     */
+    private static int countParams(String desc) {
+        if (desc == null) return -1;
+        int close = desc.indexOf(')');
+        if (close <= 0) return -1;
+        String params = desc.substring(1, close);
+        int count = 0;
+        int i = 0;
+        while (i < params.length()) {
+            char c = params.charAt(i);
+            if (c == 'L') {
+                int end = params.indexOf(';', i);
+                if (end < 0) return -1;
+                i = end + 1;
+            } else if (c == '[') {
+                i++;
+                continue;
+            } else {
+                i++;
+            }
+            count++;
+        }
+        return count;
     }
 
     /**
      * Tier B: the switch defaults to off and only an explicit truthy value turns it on.
      *
-     * <p>Default-off is the load-bearing decision in this whole tier. An unvalidated hook that
-     * runs for everyone is a hang waiting to happen; the parser is therefore tested from both
-     * directions — every accepted spelling, and the strings that must not accidentally enable it.
-     * </p>
+     * <p>Default-off is the load-bearing decision in this tier. Tier A writes two files and hooks
+     * nothing; Tier B installs a callback on the path every assistant reply travels through, and
+     * it has never run on hardware. The parser is therefore asserted from both directions: every
+     * accepted spelling, and every string that must not accidentally enable it — including the
+     * blank and unreadable cases, which are the ones a file-based switch gets wrong.</p>
      */
     private static void checkTierBSettings(List<String> out) {
-        expect(out, "null switch is off", !QwenChatPipelineSettings.isTruthy(null));
-        expect(out, "empty switch is off", !QwenChatPipelineSettings.isTruthy(""));
-        expect(out, "whitespace switch is off", !QwenChatPipelineSettings.isTruthy("   "));
-        expect(out, "zero switch is off", !QwenChatPipelineSettings.isTruthy("0"));
-        expect(out, "false switch is off", !QwenChatPipelineSettings.isTruthy("false"));
-        expect(out, "off switch is off", !QwenChatPipelineSettings.isTruthy("off"));
-        expect(out, "garbage switch is off", !QwenChatPipelineSettings.isTruthy("maybe"));
-        expect(out, "one enables", QwenChatPipelineSettings.isTruthy("1"));
-        expect(out, "true enables", QwenChatPipelineSettings.isTruthy("true"));
-        expect(out, "TRUE enables case-insensitively",
-                QwenChatPipelineSettings.isTruthy("TRUE"));
-        expect(out, "on enables", QwenChatPipelineSettings.isTruthy("on"));
-        expect(out, "padded value enables after trim",
-                QwenChatPipelineSettings.isTruthy("  1  "));
-        expect(out, "switch path lives in qwen sandbox",
-                QwenChatPipelineSettings.SWITCH_FILE.startsWith(QwenHost.FILES_DIR));
-        expect(out, "switch path keeps deekseep prefix",
-                QwenChatPipelineSettings.SWITCH_FILE.contains("/deekseep_"));
-        expect(out, "describe names the state",
-                QwenChatPipelineSettings.describe().contains("chatPipeline="));
+        expect(out, "switch absent means off by default",
+                !QwenChatPipeline.isEnabled());
+        expect(out, "switch file path lives in the qwen sandbox",
+                QwenChatPipeline.enabledFilePath().startsWith(QwenHost.FILES_DIR));
+        expect(out, "switch file keeps the deekseep prefix",
+                QwenChatPipeline.enabledFilePath().contains("/deekseep_"));
+        expect(out, "switch file is distinct from the module master switch",
+                !QwenChatPipeline.enabledFilePath().equals(QwenPaths.MODULE_ENABLED_FILE));
+        expect(out, "pipeline log path is not the shared srv log",
+                !QwenPaths.CHAT_PIPELINE_LOG_PATH.equals(QwenPaths.SRV_LOG_PATH));
+        expect(out, "pipeline log path lives in the qwen sandbox",
+                QwenPaths.CHAT_PIPELINE_LOG_PATH.startsWith(QwenHost.FILES_DIR));
+        expect(out, "diagnostic summary reports the switch state",
+                QwenChatPipeline.diagnosticSummary().contains("chatPipeline.enabled=false"));
+        expect(out, "diagnostic summary reports the seam",
+                QwenChatPipeline.diagnosticSummary().contains("chatPipeline.seam=none"));
     }
 
     /**
-     * Tier B: body capture bounds and never throws.
+     * Tier B: capture bounds and "never throws".
      *
-     * <p>The pipeline sees attacker-influenced-length data — a long streamed reply — so the
-     * truncation boundary is where a heap blow-up or a split surrogate pair would show up. The
-     * "never throws" assertions matter just as much: these helpers are called from inside a host
-     * callback, where a throw takes the app down.</p>
+     * <p>The pipeline sees attacker-influenced-length data — a long streamed reply is assembled
+     * chunk by chunk into one string — so the truncation boundary is where a heap blow-up or a
+     * split surrogate would surface. The never-throws assertions matter just as much: every one of
+     * these helpers is called from inside a host callback, where a throw takes the app down.</p>
      */
     private static void checkTierBBodyHandling(List<String> out) {
-        QwenChatPipeline.resetForTest();
-        expect(out, "pipeline not installed before hooking",
+        expect(out, "pipeline not installed before install",
                 !QwenChatPipeline.isInstalled());
-        expect(out, "no bodies observed before hooking",
-                QwenChatPipeline.observedCount() == 0);
-        expect(out, "rewrite is not permitted before hooking",
-                !QwenChatPipeline.isRewritePermitted());
+        expect(out, "no capture before install", QwenChatPipeline.captureCount() == 0);
+        expect(out, "no truncation before install", QwenChatPipeline.truncationCount() == 0);
+        expect(out, "no rewrite seam armed by default", rewriteSeamIsOff());
 
-        expect(out, "truncate passes short body through",
-                "hello".equals(QwenChatPipeline.truncate("hello")));
-        expect(out, "truncate handles null", "".equals(QwenChatPipeline.truncate(null)));
-        expect(out, "truncate handles empty", "".equals(QwenChatPipeline.truncate("")));
+        expect(out, "capture passes a short body through",
+                "hello".equals(QwenResponseTap.capture("hello")));
+        expect(out, "capture renders null as empty",
+                "".equals(QwenResponseTap.capture(null)));
+        expect(out, "capture handles empty", "".equals(QwenResponseTap.capture("")));
+        expect(out, "short body is not truncated",
+                !QwenResponseTap.wouldTruncate("hello"));
+        expect(out, "null body is not truncated",
+                !QwenResponseTap.wouldTruncate(null));
+
+        int limit = QwenResponseTap.MAX_CAPTURED_CHARS;
+        expect(out, "capture cap is 64k", limit == 65536);
 
         StringBuilder big = new StringBuilder();
-        int limit = QwenChatPipeline.MAX_BODY_CHARS;
         for (int i = 0; i < limit + 100; i++) big.append('x');
-        String truncated = QwenChatPipeline.truncate(big.toString());
-        expect(out, "truncate marks the cut", truncated.contains("truncated"));
-        expect(out, "truncate reports original length",
-                truncated.contains("total=" + big.length()));
-        expect(out, "truncate result stays bounded",
-                truncated.length() < big.length() + 64);
-        expect(out, "body limit is 64k", limit == 65536);
+        expect(out, "over-cap body reports truncation",
+                QwenResponseTap.wouldTruncate(big.toString()));
+        String truncated = QwenResponseTap.capture(big.toString());
+        expect(out, "truncated capture carries the marker",
+                truncated.contains(QwenResponseTap.TRUNCATION_MARKER));
+        expect(out, "truncated capture reports the original length",
+                truncated.contains("totalChars=" + big.length()));
+        expect(out, "truncated capture stays bounded",
+                truncated.length() < limit + 128);
 
-        // Boundary: exactly at the limit must not be truncated.
+        // Boundary: exactly at the cap must not be touched, otherwise every maximal reply pays
+        // for a marker it did not need.
         StringBuilder exact = new StringBuilder();
         for (int i = 0; i < limit; i++) exact.append('y');
-        expect(out, "body at limit is not truncated",
-                !QwenChatPipeline.truncate(exact.toString()).contains("truncated"));
+        expect(out, "body exactly at the cap is not truncated",
+                !QwenResponseTap.capture(exact.toString())
+                        .contains(QwenResponseTap.TRUNCATION_MARKER));
 
-        // observe() must swallow every shape of junk rather than propagate it.
+        expect(out, "sse frames are recognised",
+                QwenResponseTap.looksLikeSse("data: {\"a\":1}\n\ndata: [DONE]\n"));
+        expect(out, "json body is not mistaken for sse",
+                !QwenResponseTap.looksLikeSse("{\"success\":true}"));
+        expect(out, "kind label marks json",
+                QwenResponseTap.describeKind("{\"a\":1}").startsWith("json|"));
+        expect(out, "kind label marks null", "null|0".equals(QwenResponseTap.describeKind(null)));
+
+        // install() must refuse to hook on a bare JDK rather than throw; that is the whole reason
+        // the attach path can call it without a guard of its own.
         boolean threw = false;
+        boolean result = true;
         try {
-            QwenChatPipeline.observe(null, "test");
-            QwenChatPipeline.observe(Integer.valueOf(7), "test");
-            QwenChatPipeline.observe("", "test");
-            QwenChatPipeline.observe("payload", "test");
-            QwenChatPipeline.resetForTest();
+            result = QwenChatPipeline.install(null);
+            QwenChatPipeline.install(QwenAdapterSelfTest.class.getClassLoader());
         } catch (Throwable t) {
             threw = true;
         }
-        expect(out, "observe never throws on junk input", !threw);
+        expect(out, "install never throws without an android runtime", !threw);
+        expect(out, "install reports false when it cannot hook", !result);
+        expect(out, "install leaves a result string behind",
+                !"not-attempted".equals(QwenChatPipeline.lastResult()));
+        expect(out, "switch off is the reported reason",
+                "disabled".equals(QwenChatPipeline.lastResult())
+                        || "null-classloader".equals(QwenChatPipeline.lastResult()));
+    }
+
+    /** True when no rewriter is armed; the seam must start empty in a fresh process. */
+    private static boolean rewriteSeamIsOff() {
+        try {
+            QwenChatPipeline.setRewriter(null);
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     /**
