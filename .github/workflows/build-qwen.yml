@@ -35,7 +35,10 @@ jobs:
           java-version: "17"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        # v4 resolves the cmdline-tools that still ship the `tools` package;
+        # v3 bootstraps one where `sdkmanager "tools"` fails with
+        # "Failed to find package 'tools'" on current runner images.
+        uses: android-actions/setup-android@v4
 
       - name: Install Android platform and build tools
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
